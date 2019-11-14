@@ -1,0 +1,6 @@
+.idea/
+.*
+!.gitignore
+tmp/.*
+*.log
+*.log.*
