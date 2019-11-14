@@ -11,9 +11,9 @@ var (
 )
 
 type _App struct {
-	UserLoginTTL time.Duration `toml:"user_login_ttl"` // 缓存清理天数
-	DepotsNum    int           `toml:"depots_num"`     // 缓存分库数
-	ModelSync    bool          `toml:"model_sync" `    // 是否同步数据库
+	A time.Duration `toml:"a"`
+	B int           `toml:"b"`
+	C bool          `toml:"c" `
 }
 
 func (s *_App) Valid(v *validation.Validation) {
