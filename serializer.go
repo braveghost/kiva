@@ -2,13 +2,16 @@ package apollo
 
 import (
 	"encoding/json"
+	"reflect"
+
 	"github.com/BurntSushi/toml"
 	"github.com/astaxie/beego/validation"
+	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 )
 
 type (
-	configType string
+	configType       string
 	configSerializer func(buf []byte, c validation.ValidFormer) error
 )
 
@@ -45,17 +48,60 @@ func SetSerializer(fn configSerializer) {
 	defaultSerializer = fn
 }
 
+func fill(src reflect.Value, dst interface{}) error {
+	dstValue := reflect.ValueOf(dst)
+	dstType := reflect.TypeOf(dst).Elem()
+
+	if dstValue.Kind() != reflect.Ptr {
+		return errors.New("dst必须是point")
+	}
+
+	for i := 0; i < dstType.NumField(); i++ {
+		name := dstType.Field(i).Name
+		dstField := dstValue.Elem().FieldByName(name)
+		if dstField.CanSet() {
+			dstField.Set(src.Elem().FieldByName(name))
+		}
+	}
+	return nil
+}
+
 // json 序列化
 func JsonSerializer(buf []byte, c validation.ValidFormer) error {
-	return json.Unmarshal(buf, &c)
+	newStruct, newIter := getNewStruct(c)
+	err := json.Unmarshal(buf, newIter)
+	if err != nil {
+		return err
+	}
+	return fill(newStruct, c)
+}
+
+func getNewStruct(c validation.ValidFormer) (reflect.Value, interface{}) {
+	t := reflect.TypeOf(c)
+	if t.Kind() == reflect.Ptr { //指针类型获取真正type需要调用Elem
+		t = t.Elem()
+	}
+	value := reflect.New(t) // 调用反射创建对象
+	iter := value.Interface()
+	return value, iter
 }
 
 // yaml 序列化
 func YamlSerializer(buf []byte, c validation.ValidFormer) error {
-	return yaml.Unmarshal(buf, c)
+	newStruct, newIter := getNewStruct(c)
+	err := yaml.Unmarshal(buf, newIter)
+	if err != nil {
+		return err
+	}
+	return fill(newStruct, c)
 }
 
-// yaml 序列化
+// toml 序列化
 func TomlSerializer(buf []byte, c validation.ValidFormer) error {
-	return toml.Unmarshal(buf, c)
+	newStruct, newIter := getNewStruct(c)
+	err := toml.Unmarshal(buf, newIter)
+	if err != nil {
+		return err
+	}
+	return fill(newStruct, c)
 }

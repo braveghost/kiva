@@ -21,5 +21,5 @@ func (s *_App) Valid(v *validation.Validation) {
 
 func init() {
 	// 实际上是 toml 格式, apollo 暂不支持 toml 编辑
-	apollo.SetContainer("app.yaml", App)
+	apollo.SetContainer("test.yaml", App)
 }

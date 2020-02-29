@@ -1,47 +1,18 @@
 package apollo
 
 import (
-	"github.com/astaxie/beego/validation"
-	"github.com/braveghost/agollo"
-	logging "github.com/braveghost/joker"
-	"github.com/pkg/errors"
+	"context"
+	"encoding/json"
 	"os"
-	"path"
 	"sync"
+
+	"github.com/astaxie/beego/validation"
+	logging "github.com/braveghost/joker"
+	"github.com/philchia/agollo/v3"
+	"github.com/pkg/errors"
 )
 
 type configAlarm func(string) error
-
-var (
-	EnvApolloConfErr = errors.New("Environment [APOLLOCONFIG] variable error")
-	ApolloStartErr   = errors.New("Init apollo conf error")
-	GetApolloConfErr = errors.New("Get apollo conf error")
-	SetApolloConfErr = errors.New("Set apollo conf error")
-)
-
-var (
-	// 指定命名空间
-	configNameSpaceName []string
-
-	// 环境变量
-	relativePathEnvKey = "APOLLO_RELATIVE_PATH"
-	absolutePathEnvKey = "APOLLO_ABSOLUTE_PATH"
-
-	// 默认配置文件相对路径
-	relativePath string
-	// 绝对路径, 优先找绝对路径
-	absolutePath string
-
-	// reload function
-	reloadOptions map[string]option
-
-	defaultConfigs = map[string]validation.ValidFormer{}
-
-	// error channel
-	errQueue = make(chan error)
-	// error alarm
-	alarmFunc configAlarm
-)
 
 func init() {
 	go func() {
@@ -56,15 +27,20 @@ func init() {
 	}()
 }
 
+// 设置告警
 func SetAlarm(fn configAlarm) {
 	alarmFunc = fn
 }
 
+// 配置容器设置
 func SetContainer(ns string, cf validation.ValidFormer) {
 	defaultConfigs[ns] = cf
 }
 
-type option func(ce *agollo.ChangeEvent) error
+type (
+	option      func(ce *agollo.ChangeEvent) error
+	watchOption func(namespace, data string)
+)
 
 // 设置加载函数
 func SetReloadOptions(fns map[string]option) {
@@ -85,73 +61,76 @@ func SetAbsolutePathByEnv() {
 	absolutePath = p
 }
 
-// 从环境变量获取 properties 文件相对路径
-func SetRelativePathByEnv() {
-	p := os.Getenv(relativePathEnvKey)
-	if p == "" {
-		logging.Panicf("Kiva.SetCfgRelativePathByEnv.Path.Null", "err", EnvApolloConfErr)
-	}
+// 设置 properties 文件绝对路径
+func SetPath(p string) {
 	absolutePath = p
 }
 
-// 设置 properties 文件相对路径, 如果同时设置绝对路径, 绝对路径优先
-func SetRelativePath(p string) {
-	relativePath = p
-}
-
-// 根据 mode 拼接配置文件相对路径
-func SetRelativePathByMode(mode string) {
-	relativePath = "properties/" + mode + ".properties"
-}
-
-// 设置 properties 文件绝对路径, 如果同时设置相对路径, 绝对路径优先
-func SetAbsolutePath(p string) {
-	absolutePath = p
-}
-
-// 初始化配置
-func InitConfig() {
-	if len(relativePath) == 0 && len(absolutePath) == 0 {
-		logging.Errorw("Kiva.InitConfig.PropertiesPath.Error", "err", EnvApolloConfErr)
-		os.Exit(1)
-	}
-
-	var pt string
+// 通过 properties 初始化配置 自动序列化
+func InitApolloSerializer() {
 	if len(absolutePath) == 0 {
-		tmp, _ := os.Getwd()
-		pt = path.Join(tmp, relativePath)
-	} else {
-		pt = absolutePath
-	}
-	conf, err := readConf(pt)
-	if err != nil {
-		logging.Errorw("Kiva.InitConfig.ReadConf.Error", "err", err)
+		logging.Errorw("Kiva.InitApolloSerializer.PropertiesPath.Error", "error", EnvApolloConfErr)
+		logging.Sync()
 		os.Exit(1)
 	}
-	err = apolloStart(conf)
+	conf := GetConfig(absolutePath)
+	if conf == nil {
+		logging.Sync()
+		os.Exit(1)
+	}
+	err := apolloStart(conf)
 	if err != nil {
-		logging.Errorw("Kiva.InitConfig.ApolloStart.Error", "err", ApolloStartErr)
+		logging.Errorw("Kiva.InitApolloSerializer.ApolloStart.Error", "error", err)
 	}
 }
 
-func readConf(pt string) (*agollo.Conf, error) {
+// 通过配置初始化 自动序列化
+func InitApolloSerializerByConf(conf *agollo.Conf) {
+	err := apolloStart(conf)
+	if err != nil {
+		logging.Errorw("Kiva.InitApolloSerializerByConf.ApolloStart.Error", "error", err)
+	}
+}
+
+// 通过字符串内容获取配置
+func GetConfigByStr(s string) *agollo.Conf {
+	logging.Infow("Kiva.GetConfigByBytes.ReadConf.Info", "content", s)
+	return GetConfigByBytes([]byte(s))
+}
+
+// 通过字符串内容获取配置
+func GetConfigByBytes(s []byte) *agollo.Conf {
+	logging.Infow("Kiva.GetConfigByBytes.ReadConf.Info", "content", string(s))
+	var conf = &agollo.Conf{}
+	err := json.Unmarshal(s, conf)
+
+	if err != nil {
+		logging.Errorw("Kiva.ReadConf.NewConf.Error", "error", err)
+		return nil
+	}
+	return conf
+}
+
+// 通过路径获取配置
+func GetConfig(pt string) *agollo.Conf {
 	logging.Infow("Kiva.ReadConf.Info", "path", pt)
 
 	conf, err := agollo.NewConf(pt)
 	if err != nil {
-		logging.Errorw("Kiva.InitApolloCfg.NewConf.Error", "err", err)
-		return nil, err
+		logging.Errorw("Kiva.ReadConf.NewConf.Error", "err", err)
+		return nil
 	}
-	return conf, err
+	return conf
 }
 
-func InitApollo(pt string) {
-	conf, err := readConf(pt)
-	if err != nil {
-		logging.Errorw("Kiva.InitConfig.ReadConf.Error", "err", err)
+// 最基本的运行 apollo 自动序列化
+func InitApolloByPath(pt string) {
+	conf := GetConfig(pt)
+	if conf == nil {
+		logging.Sync()
 		os.Exit(1)
 	}
-	err = apolloStart(conf)
+	err := apolloStart(conf)
 	if err != nil {
 		logging.Errorw("Kiva.InitConfig.ApolloStart.Error", "err", ApolloStartErr)
 	}
@@ -160,7 +139,6 @@ func InitApollo(pt string) {
 func apolloStart(conf *agollo.Conf) (err error) {
 
 	configNameSpaceName = conf.NameSpaceNames
-
 	err = agollo.StartWithConf(conf)
 	if err != nil {
 		logging.Errorw("Kiva.InitApolloCfg.StartWithConf.Error", "err", err, "conf", conf)
@@ -191,6 +169,7 @@ func apolloStart(conf *agollo.Conf) (err error) {
 func reload() error {
 	for _, ns := range configNameSpaceName {
 		err := upload(ns)
+
 		if err != nil {
 			logging.Errorw("Kiva.InitCfg.Reload.Upload.Error", "name_space", ns, "err", err)
 			return err
@@ -205,6 +184,7 @@ var lock = sync.Mutex{}
 func upload(ns string) error {
 	lock.Lock()
 	defer lock.Unlock()
+
 	content := agollo.GetNameSpaceContent(ns, "")
 	conf, ok := defaultConfigs[ns]
 	if ok {
@@ -224,4 +204,145 @@ func upload(ns string) error {
 	}
 
 	return nil
+}
+
+// 支持动态扩展 namespace, 自动序列化
+func NewApolloSerializer(conf *agollo.Conf, handler option) *ApolloSerializer {
+	ap := &ApolloSerializer{conf: conf, Client: agollo.NewClient(conf), handler: handler}
+	ap.ctx, ap.cancel = context.WithCancel(context.Background())
+	return ap
+}
+
+// 支持动态扩展 namespace, 自动序列化
+func NewApolloSerializerByPath(p string, handler option) *ApolloSerializer {
+	conf := GetConfig(p)
+	if conf == nil {
+		logging.Sync()
+		os.Exit(1)
+	}
+	return NewApolloSerializer(conf, handler)
+}
+
+type ApolloSerializer struct {
+	conf    *agollo.Conf
+	Client  *agollo.Client
+	handler option
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func (ap *ApolloSerializer) SubscribeNameSpaces(ns ...string) {
+	_ = ap.Client.SubscribeToNamespaces(ns...)
+}
+
+func (ap *ApolloSerializer) upload(ns string) error {
+
+	// 监听更新
+	content := ap.Client.GetNameSpaceContent(ns, "")
+	conf, ok := defaultConfigs[ns]
+	if ok {
+		if len(content) == 0 {
+			return errors.Wrapf(GetApolloConfErr, "Namespace '%s' get", ns)
+		}
+		err := defaultSerializer([]byte(content), conf)
+		if err != nil {
+			return errors.Wrapf(SetApolloConfErr, "Namespace '%s' unmarshal [%s]", ns, err.Error())
+		}
+		if err := Valid(conf); err != nil {
+			return errors.Wrapf(SetApolloConfErr, "Namespace '%s' valid", ns)
+		}
+
+	} else {
+		if ns == "application" {
+			return nil
+		}
+		return errors.Wrapf(SetApolloConfErr, "Namespace '%s'", ns)
+	}
+
+	return nil
+
+}
+func (ap *ApolloSerializer) ReloadHandler() {
+	for _, ns := range ap.conf.NameSpaceNames {
+		err := ap.upload(ns)
+
+		if err != nil {
+			logging.Warnw("ApolloSerializer.ReloadHandler.Warning", "error", err)
+		}
+
+	}
+
+}
+
+// StartWithConf run agollo with Conf
+func (ap *ApolloSerializer) Start() {
+	err := ap.Client.Start()
+	if err != nil {
+		logging.Errorw("Kiva.ApolloSerializer.Start.Error", "error", err)
+		logging.Sync()
+		os.Exit(-1)
+	}
+
+	handler := ap.handler
+
+	ap.ReloadHandler()
+	go func() {
+		for {
+			select {
+			case ev := <-ap.Client.WatchUpdate():
+				logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Info", "namespace", ev.Namespace, )
+
+				if handler == nil {
+					err = ap.upload(ev.Namespace)
+
+				} else {
+					err = handler(ev)
+				}
+				if err != nil {
+					logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Error", "namespace", ev.Namespace, "error", err)
+				}
+			case <-ap.ctx.Done():
+				logging.Infof("Kiva.ApolloSerializer.Safe.Stop")
+				return
+			}
+		}
+	}()
+}
+
+// Stop sync config
+func (ap *ApolloSerializer) Stop() {
+	ap.cancel()
+	_ = ap.Client.Stop()
+}
+
+// 最基本的运行 apollo 自动加载并维护 watch
+func RunApolloByPath(path string, handler watchOption) {
+	conf := GetConfig(path)
+	if conf == nil {
+		logging.Sync()
+		os.Exit(1)
+	}
+	RunApollo(conf, handler)
+}
+
+// 最基本的运行 apollo 自动加载并维护 watch
+func RunApollo(conf *agollo.Conf, handler watchOption) {
+	err := agollo.StartWithConf(conf)
+	if err != nil {
+		logging.Errorf("start agollo config error:%v", err)
+		logging.Sync()
+		os.Exit(-1)
+	}
+	if handler == nil {
+		return
+	}
+	for _, ns := range conf.NameSpaceNames {
+		handler(ns, agollo.GetNameSpaceContent(ns, ""))
+	}
+	go func() {
+		for ev := range agollo.WatchUpdate() {
+			logging.Infof("apollo changed, namespace:%s", ev.Namespace)
+			handler(ev.Namespace, agollo.GetNameSpaceContent(ev.Namespace, ""))
+		}
+	}()
 }
