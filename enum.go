@@ -23,7 +23,7 @@ var (
 	absolutePath string
 
 	// reload function
-	reloadOptions map[string]option
+	watchOptions = map[string]watchOption{}
 
 	defaultConfigs = map[string]validation.ValidFormer{}
 

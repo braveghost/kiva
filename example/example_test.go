@@ -61,8 +61,11 @@ func TestInitApolloByPath(t *testing.T) {
 	}
 }
 func TestNewApolloSerializer(t *testing.T) {
-
-	ac := apollo.NewApolloSerializer(apollo.GetConfig("/Users/miller/Documents/GoPro/src/github.com/braveghost/kiva/example/properties/local.properties"), nil)
+	apollo.AddWatchOption("test.yaml", func(namespace, data string) error {
+		fmt.Println(namespace, data)
+		return nil
+	})
+	ac := apollo.NewApolloSerializer(apollo.GetConfig("/Users/miller/Documents/GoPro/src/github.com/braveghost/kiva/example/properties/local.properties"))
 	ac.Start()
 	for {
 		fmt.Println(properties.App)

@@ -38,18 +38,17 @@ func SetContainer(ns string, cf validation.ValidFormer) {
 }
 
 type (
-	option      func(ce *agollo.ChangeEvent) error
-	watchOption func(namespace, data string)
+	watchOption func(namespace, data string) error
 )
 
 // 设置加载函数
-func SetReloadOptions(fns map[string]option) {
-	reloadOptions = fns
+func SetWatchOptions(fns map[string]watchOption) {
+	watchOptions = fns
 }
 
 // 设置加载函数
-func AddReloadOption(key string, fn option) {
-	reloadOptions[key] = fn
+func AddWatchOption(namespace string, fn watchOption) {
+	watchOptions[namespace] = fn
 }
 
 // 从环境变量获取 properties 文件绝对路径
@@ -207,28 +206,27 @@ func upload(ns string) error {
 }
 
 // 支持动态扩展 namespace, 自动序列化
-func NewApolloSerializer(conf *agollo.Conf, handler option) *ApolloSerializer {
-	ap := &ApolloSerializer{conf: conf, Client: agollo.NewClient(conf), handler: handler}
+func NewApolloSerializer(conf *agollo.Conf) *ApolloSerializer {
+	ap := &ApolloSerializer{conf: conf, Client: agollo.NewClient(conf)}
 	ap.ctx, ap.cancel = context.WithCancel(context.Background())
 	return ap
 }
 
 // 支持动态扩展 namespace, 自动序列化
-func NewApolloSerializerByPath(p string, handler option) *ApolloSerializer {
+func NewApolloSerializerByPath(p string) *ApolloSerializer {
 	conf := GetConfig(p)
 	if conf == nil {
 		logging.Sync()
 		os.Exit(1)
 	}
-	return NewApolloSerializer(conf, handler)
+	return NewApolloSerializer(conf)
 }
 
 type ApolloSerializer struct {
-	conf    *agollo.Conf
-	Client  *agollo.Client
-	handler option
-	ctx     context.Context
-	cancel  context.CancelFunc
+	conf   *agollo.Conf
+	Client *agollo.Client
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (ap *ApolloSerializer) SubscribeNameSpaces(ns ...string) {
@@ -237,8 +235,14 @@ func (ap *ApolloSerializer) SubscribeNameSpaces(ns ...string) {
 
 func (ap *ApolloSerializer) upload(ns string) error {
 
-	// 监听更新
 	content := ap.Client.GetNameSpaceContent(ns, "")
+	handler, ok := watchOptions[ns]
+	if ok {
+		err := handler(ns, ap.Client.GetNameSpaceContent(ns, ""))
+		if err != nil {
+			return err
+		}
+	}
 	conf, ok := defaultConfigs[ns]
 	if ok {
 		if len(content) == 0 {
@@ -283,22 +287,17 @@ func (ap *ApolloSerializer) Start() {
 		os.Exit(-1)
 	}
 
-	handler := ap.handler
-
 	ap.ReloadHandler()
 	go func() {
+		// 监听更新
 		for {
 			select {
 			case ev := <-ap.Client.WatchUpdate():
 				logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Info", "namespace", ev.Namespace, )
-
-				if handler != nil {
-					err = handler(ev)
-				}
 				if err != nil {
 					logging.Infow("Kiva.ApolloSerializer.Start.WatchHandler.Error", "namespace", ev.Namespace, "error", err)
 				}
-					err = ap.upload(ev.Namespace)
+				err = ap.upload(ev.Namespace)
 				if err != nil {
 					logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Error", "namespace", ev.Namespace, "error", err)
 				}
@@ -317,33 +316,46 @@ func (ap *ApolloSerializer) Stop() {
 }
 
 // 最基本的运行 apollo 自动加载并维护 watch
-func RunApolloByPath(path string, handler watchOption) {
+func RunApolloByPath(path string) {
 	conf := GetConfig(path)
 	if conf == nil {
 		logging.Sync()
 		os.Exit(1)
 	}
-	RunApollo(conf, handler)
+	RunApollo(conf)
 }
 
 // 最基本的运行 apollo 自动加载并维护 watch
-func RunApollo(conf *agollo.Conf, handler watchOption) {
+func RunApollo(conf *agollo.Conf) {
 	err := agollo.StartWithConf(conf)
 	if err != nil {
-		logging.Errorf("start agollo config error:%v", err)
+		logging.Errorw("RunApollo.StartWithConf.Error", "error", err)
 		logging.Sync()
 		os.Exit(-1)
 	}
-	if handler == nil {
-		return
-	}
+
 	for _, ns := range conf.NameSpaceNames {
-		handler(ns, agollo.GetNameSpaceContent(ns, ""))
+		handler, ok := watchOptions[ns]
+		if !ok {
+			continue
+		}
+		err := handler(ns, agollo.GetNameSpaceContent(ns, ""))
+		if err != nil {
+			logging.Errorw("RunApollo.Handler.Error", "error", err, "namespace", ns)
+		}
 	}
 	go func() {
 		for ev := range agollo.WatchUpdate() {
-			logging.Infof("apollo changed, namespace:%s", ev.Namespace)
-			handler(ev.Namespace, agollo.GetNameSpaceContent(ev.Namespace, ""))
+			ns := ev.Namespace
+			logging.Infow("RunApollo.Changed.Info", "namespace", ns)
+			handler, ok := watchOptions[ns]
+			if !ok {
+				continue
+			}
+			err := handler(ns, agollo.GetNameSpaceContent(ns, ""))
+			if err != nil {
+				logging.Errorw("RunApollo.Changed.Handler.Error", "error", err, "namespace", ns)
+			}
 		}
 	}()
 }
