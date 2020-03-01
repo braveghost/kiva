@@ -292,12 +292,13 @@ func (ap *ApolloSerializer) Start() {
 			case ev := <-ap.Client.WatchUpdate():
 				logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Info", "namespace", ev.Namespace, )
 
-				if handler == nil {
-					err = ap.upload(ev.Namespace)
-
-				} else {
+				if handler != nil {
 					err = handler(ev)
 				}
+				if err != nil {
+					logging.Infow("Kiva.ApolloSerializer.Start.WatchHandler.Error", "namespace", ev.Namespace, "error", err)
+				}
+					err = ap.upload(ev.Namespace)
 				if err != nil {
 					logging.Infow("Kiva.ApolloSerializer.Start.WatchUpdate.Error", "namespace", ev.Namespace, "error", err)
 				}
