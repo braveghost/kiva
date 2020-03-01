@@ -257,10 +257,7 @@ func (ap *ApolloSerializer) upload(ns string) error {
 		}
 
 	} else {
-		if ns == "application" {
-			return nil
-		}
-		return errors.Wrapf(SetApolloConfErr, "Namespace '%s'", ns)
+		logging.Warnw(errors.Wrapf(SetApolloConfErr, "Namespace '%s'", ns).Error())
 	}
 
 	return nil
